@@ -1,0 +1,8 @@
+# إعداد الاستضافة المجانية على Render: زر «Deploy to Render» يقرأ هذا الملف
+services:
+  - type: web
+    name: sah-aw-teeh
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start

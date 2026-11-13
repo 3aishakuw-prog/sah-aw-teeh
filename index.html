@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>صح أو طيح! — الشاشة الرئيسية</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@500;600;700;800&display=swap">
+  <link rel="stylesheet" href="style.css">
+
+  <!-- مكتبة qrcode.js لتوليد الباركود.
+       إذا ما تحمّلت (بدون إنترنت)، host.js يستخدم باركود بديل من الخادم تلقائياً -->
+  <script>window.QR_LIB = 'loading';</script>
+  <script async src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+          onload="window.QR_LIB='ready';dispatchEvent(new Event('qrlib'))"
+          onerror="window.QR_LIB='failed';dispatchEvent(new Event('qrlib'))"></script>
+</head>
+<body class="host" data-phase="boot">
+
+  <!-- الشريط العلوي -->
+  <header class="topbar">
+    <div class="logo" role="img" aria-label="صح أو طيح!">
+      <span class="l-true">صح</span><span class="l-or">أو</span><span class="l-fall">طيح!</span>
+    </div>
+    <div class="hud">
+      <span class="chip" id="hudWaiting" hidden></span>
+      <span class="chip" id="hudPlayers" hidden></span>
+      <span class="chip">الغرفة <b id="roomCode">----</b></span>
+      <button class="btn-ghost invite-btn" id="inviteBtn" type="button" hidden>📱 دخول الأصدقاء</button>
+      <button class="btn-ghost" id="endBtn" type="button" hidden>إنهاء اللعبة</button>
+    </div>
+  </header>
+
+  <section class="stage-top">
+    <!-- غرفة الانتظار: الباركود والرابط -->
+    <div class="panel lobby" id="lobby" hidden>
+      <div class="qr-card">
+        <div class="qr-box loading" id="qr" role="img" aria-label="باركود دخول اللاعبين"></div>
+      </div>
+      <div class="join">
+        <h1>امسح الباركود من جوالك وادخل باسمك</h1>
+        <p class="hint"><span id="joinHint">لازم الجوال يكون على نفس شبكة الواي فاي.</span> كود الغرفة <b id="lobbyCode">----</b></p>
+        <div class="link-row">
+          <span class="link" id="joinUrl" dir="ltr">…</span>
+          <button class="btn-ghost" id="copyBtn" type="button">نسخ الرابط</button>
+        </div>
+        <label class="net-row" id="netRow" hidden>
+          <span>الجوالات ما تفتح الرابط؟ جرّب عنوان ثاني:</span>
+          <select id="netSelect"></select>
+        </label>
+        <p class="warn" id="netWarn" hidden>ما لقينا شبكة واي فاي على هذا الكمبيوتر. اربطه بنفس شبكة الجوالات ثم حدّث الصفحة.</p>
+        <div class="lobby-foot">
+          <button class="btn-primary" id="startBtn" type="button" disabled>ابدأ اللعبة</button>
+          <span class="lobby-count" id="lobbyCount">ما دخل أحد للحين</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- السؤال والعداد -->
+    <div class="panel question" id="question" hidden>
+      <div class="q-main">
+        <div class="q-meta">
+          <span class="pill-lime" id="qCategory"></span>
+          <span class="chip" id="qRound"></span>
+        </div>
+        <h2 class="q-text" id="qText"></h2>
+      </div>
+      <div class="q-side">
+        <div class="timer" id="timer">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="t-track" cx="50" cy="50" r="44"></circle>
+            <circle class="t-arc" id="timerArc" cx="50" cy="50" r="44" pathLength="100"></circle>
+          </svg>
+          <span id="timerNum">15</span>
+        </div>
+        <span class="chip" id="answered"></span>
+      </div>
+    </div>
+
+    <!-- نهاية اللعبة -->
+    <div class="panel gameover" id="gameover" hidden>
+      <p class="go-title" id="goTitle"></p>
+      <h2 class="go-names" id="goNames"></h2>
+      <button class="btn-primary" id="againBtn" type="button">العب مرة ثانية</button>
+    </div>
+  </section>
+
+  <!-- الساحة: المنصات والشخصيات -->
+  <main class="arena" id="arena">
+    <div class="plat plat-false" id="plat-false"></div>
+    <div class="plat plat-mid" id="plat-mid"></div>
+    <div class="plat plat-true" id="plat-true"></div>
+    <div class="crowd" id="crowd"></div>
+    <p class="empty-hint" id="emptyHint" hidden>بانتظار أول لاعب…</p>
+    <div class="banner" id="banner" aria-live="polite">
+      <strong id="bannerMain"></strong>
+      <span id="bannerSub"></span>
+    </div>
+    <div class="confetti" id="confetti" aria-hidden="true"></div>
+  </main>
+
+  <!-- باركود الدخول متى ما تبي، حتى وسط اللعب -->
+  <div class="overlay invite" id="invite" hidden>
+    <div class="overlay-card invite-card" role="dialog" aria-modal="true" aria-labelledby="inviteTitle">
+      <h2 id="inviteTitle">امسح الباركود وادخل</h2>
+      <div class="qr-card invite-qr">
+        <div class="qr-box loading" id="qrInvite" role="img" aria-label="باركود دخول اللاعبين"></div>
+      </div>
+      <p>اللي يدخل الحين يلعب معكم من السؤال الجاي.</p>
+      <div class="link-row">
+        <span class="link" id="inviteUrl" dir="ltr">…</span>
+        <button class="btn-ghost" id="inviteCopy" type="button">نسخ الرابط</button>
+      </div>
+      <button class="btn-primary" id="inviteClose" type="button">تم</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="offline" hidden>
+    <div class="overlay-card">
+      <h2 id="offlineTitle">انقطع الاتصال بالسيرفر</h2>
+      <p id="offlineText">نحاول نرجع… تأكد إن السيرفر شغال (npm start).</p>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>
