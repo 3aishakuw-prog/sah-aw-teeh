@@ -780,6 +780,24 @@
   });
   keepAwake();
 
+  /* ───────────────────────── الأسئلة اللي طلعت على هالشاشة ───────────────────────── */
+  // تنحفظ في المتصفح وتنرسل للسيرفر كل ما تفتح الشاشة، فالسؤال ما يتكرر أبداً
+  // حتى لو سكّرت الصفحة أو نام السيرفر.
+  const SEEN_KEY = 'tfe-seen';
+  const SEEN_MAX = 30000;
+  let seen = [];
+  try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'); } catch (e) { seen = []; }
+  if (!Array.isArray(seen)) seen = [];
+  const seenSet = new Set(seen);
+
+  function rememberQuestion(key) {
+    if (!key || seenSet.has(key)) return;
+    seenSet.add(key);
+    seen.push(key);
+    if (seen.length > SEEN_MAX) seenSet.delete(seen.shift());
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch (e) { /* التخزين مقفل */ }
+  }
+
   /* ───────────────────────── الاتصال بالسيرفر ───────────────────────── */
   let S = null; // آخر حالة من السيرفر
   const socket = io();
@@ -788,7 +806,7 @@
     ui.offline.hidden = true;
     let saved = null;
     try { saved = JSON.parse(sessionStorage.getItem('tfe-host') || 'null'); } catch (e) { saved = null; }
-    socket.emit('host:hello', saved || {}, (res) => {
+    socket.emit('host:hello', Object.assign({}, saved || {}, { seen }), (res) => {
       if (!res || !res.ok) return toast('تعذر تجهيز الغرفة');
       try { sessionStorage.setItem('tfe-host', JSON.stringify({ code: res.code, key: res.key })); } catch (e) { /* */ }
       setNetwork(res.network);
@@ -814,6 +832,7 @@
     const prevPhase = S ? S.phase : null;
     const prevRound = S && S.round ? S.round.id : '';
     S = s;
+    if (s.round && s.round.key) rememberQuestion(s.round.key);
     if (s.phase === 'question') deadline = performance.now() + s.remainingMs;
     renderPanels();
     renderArena();

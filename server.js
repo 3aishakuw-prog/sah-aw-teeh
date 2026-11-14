@@ -38,12 +38,17 @@ const CONFIG = {
 /* ───────────────────────── الأسئلة: كل الفئات ───────────────────────── */
 // كل جولة تطلع من فئة مختلفة. كل فئة فيها أسئلة مكتوبة (q)، وبعضها فيها «مولّد» (gen)
 // يركّب أسئلة جديدة بلا نهاية من جداول معلومات (عواصم، عملات، حساب، كلمات، لهجة...).
+// السؤال ما يتكرر أبداً: الشاشة الرئيسية تحفظ الأسئلة اللي طلعت وترسلها للسيرفر كل ما تفتح،
+// والفئة اللي تخلص أسئلتها المكتوبة تطلع من الدور.
 // لإضافة سؤال: حطه داخل الفئة المناسبة بهالشكل  ['نص السؤال', T]  للصح  أو  ['نص السؤال', F]  للخطأ
 // === QUESTION-BANK-START ===
 const T = true;
 const F = false;
-const GEN_SHARE = 0.35; // في الفئات اللي فيها أسئلة مكتوبة ومولّد: نسبة الأسئلة المولّدة
-const RECENT_MAX = 400; // السؤال ما يتكرر قبل ما يمر هالعدد من الأسئلة
+const GEN_SHARE = 0.35;        // في الفئات اللي فيها أسئلة مكتوبة ومولّد: نسبة الأسئلة المولّدة
+const HOST_HISTORY_MAX = 30000; // كم سؤال تتذكره الشاشة الرئيسية (عشان ما يتكرر أبداً)
+
+// بصمة قصيرة لكل سؤال: الشاشة الرئيسية تحفظها، والسؤال اللي انسأل ما يرجع أبداً
+const questionKey = (text) => crypto.createHash('sha1').update(text).digest('base64url').slice(0, 10);
 
 const rnd = (n) => crypto.randomInt(n);
 const pick = (arr) => arr[crypto.randomInt(arr.length)];
@@ -1717,55 +1722,80 @@ function mixUp(arr) {
   return arr;
 }
 
+for (const cat of CATEGORIES) cat.keys = cat.q.map(([text]) => questionKey(text));
+
 function newDeck() {
-  return { bag: [], prevCat: -1, used: CATEGORIES.map(() => new Set()), recent: [], recentSet: new Set(), answers: [] };
+  return { bag: [], prevCat: -1, done: new Set(), seen: new Set(), answers: [] };
 }
 
-// ترتيب الفئات: كيس مخلوط، كل الفئات تطلع مرة قبل ما تتكرر، وما تطلع نفس الفئة مرتين ورا بعض
+// أسئلة انسألت قبل على نفس الشاشة (من ذاكرة المتصفح): ما ترجع أبداً
+function rememberSeen(room, keys) {
+  if (!Array.isArray(keys)) return;
+  const deck = room.deck || (room.deck = newDeck());
+  for (const k of keys.slice(-HOST_HISTORY_MAX)) {
+    if (typeof k === 'string' && /^[\w-]{6,16}$/.test(k)) deck.seen.add(k);
+  }
+}
+
+// ترتيب الفئات: كيس مخلوط، كل الفئات تطلع مرة قبل ما تتكرر، وما تطلع نفس الفئة مرتين ورا بعض.
+// الفئات اللي خلصت أسئلتها (done) ما تدخل الكيس.
 function nextCategory(deck) {
-  if (!deck.bag.length) deck.bag = mixUp(CATEGORIES.map((_, i) => i));
-  let k = deck.bag.length - 1;
-  if (k > 0 && deck.bag[k] === deck.prevCat) k = rnd(k);
-  return deck.bag.splice(k, 1)[0];
+  let refills = 0;
+  for (;;) {
+    if (!deck.bag.length) {
+      if (refills++) return -1;
+      deck.bag = mixUp(CATEGORIES.map((_, i) => i).filter((i) => !deck.done.has(i)));
+      if (!deck.bag.length) return -1;
+    }
+    let k = deck.bag.length - 1;
+    if (k > 0 && deck.bag[k] === deck.prevCat) k = rnd(k);
+    const ci = deck.bag.splice(k, 1)[0];
+    if (!deck.done.has(ci)) return ci;
+  }
 }
 
 // strict: لازم الجواب يطابق want، وإذا ما صار نرجع null ونجرب فئة ثانية
 function questionFrom(deck, ci, want, strict) {
   const cat = CATEGORIES[ci];
   const category = cat.icon + ' ' + cat.name;
-  const fromGen = () => {
-    if (!cat.gen) return null;
-    for (let i = 0; i < 30; i++) {
-      const [text, answer] = cat.gen(want);
-      if (!deck.recentSet.has(text) && (!strict || answer === want)) return { text, answer, category, ci };
+  const free = cat.q.map((_, i) => i).filter((i) => !deck.seen.has(cat.keys[i]));
+  const genNew = (w) => {
+    for (let i = 0; i < 40; i++) {
+      const [text, answer] = cat.gen(w);
+      const key = questionKey(text);
+      if (!deck.seen.has(key)) return { text, answer, category, ci, key };
     }
     return null;
   };
-  const share = cat.q.length ? (cat.share ?? GEN_SHARE) : 1;
+  const fromGen = () => {
+    if (!cat.gen) return null;
+    const g = genNew(want);
+    if (g) return !strict || g.answer === want ? g : null;
+    // ما في جديد بالجواب المطلوب: نشوف العكس، وإذا حتى العكس خلص فالفئة خلصت نهائياً
+    const other = genNew(!want);
+    if (!other && !free.length) deck.done.add(ci);
+    return strict ? null : other;
+  };
+  if (!free.length && !cat.gen) {
+    deck.done.add(ci); // خلصت أسئلة هالفئة نهائياً
+    return null;
+  }
+  const share = free.length ? (cat.share ?? GEN_SHARE) : 1;
   if (cat.gen && Math.random() < share) {
     const g = fromGen();
     if (g) return g;
   }
-  if (cat.q.length) {
-    const used = deck.used[ci];
-    const all = cat.q.map((_, i) => i);
-    let free = all.filter((i) => !used.has(i) && !deck.recentSet.has(cat.q[i][0]));
-    if (!free.length) {
-      used.clear(); // خلصت أسئلة هالفئة: تبدأ دورة جديدة
-      free = all.filter((i) => !deck.recentSet.has(cat.q[i][0]));
-      if (!free.length) free = all;
-    }
+  if (free.length) {
     const same = free.filter((i) => cat.q[i][1] === want);
     if (same.length || !strict) {
       const i = pick(same.length ? same : free);
-      used.add(i);
-      return { text: cat.q[i][0], answer: cat.q[i][1], category, ci };
+      return { text: cat.q[i][0], answer: cat.q[i][1], category, ci, key: cat.keys[i] };
     }
   }
   return fromGen();
 }
 
-// السؤال الجاي للغرفة. الذاكرة (deck) تبقى للغرفة حتى لو بدأتوا لعبة جديدة
+// السؤال الجاي للغرفة: من فئة غير اللي قبلها، وعمره ما انسأل على هالشاشة
 function drawQuestion(room) {
   const deck = room.deck || (room.deck = newDeck());
   const last = deck.answers.slice(-3);
@@ -1775,8 +1805,9 @@ function drawQuestion(room) {
   const skipped = [];
   for (let tries = 0; !q && tries < 8; tries++) {
     const ci = nextCategory(deck);
+    if (ci < 0) break;
     q = questionFrom(deck, ci, want, true);
-    if (!q) skipped.push(ci);
+    if (!q && !deck.done.has(ci)) skipped.push(ci);
   }
   // الفئات اللي ما كان عندها الجواب المطلوب ترجع للكيس وتطلع بعدين
   for (const ci of skipped) if (!deck.bag.includes(ci)) deck.bag.unshift(ci);
@@ -1785,13 +1816,22 @@ function drawQuestion(room) {
     const withGen = mixUp(CATEGORIES.map((_, i) => i).filter((i) => CATEGORIES[i].gen && i !== deck.prevCat));
     for (let k = 0; !q && k < withGen.length; k++) q = questionFrom(deck, withGen[k], want, true);
   }
-  for (let tries = 0; !q && tries < CATEGORIES.length; tries++) q = questionFrom(deck, nextCategory(deck), want, false);
+  for (let tries = 0; !q && tries < CATEGORIES.length; tries++) {
+    const ci = nextCategory(deck);
+    if (ci < 0) break;
+    q = questionFrom(deck, ci, want, false);
+  }
+  if (!q) {
+    // انسألت كل الأسئلة الممكنة (شبه مستحيل): نبدأ من جديد
+    deck.seen.clear();
+    deck.done.clear();
+    deck.bag = [];
+    return drawQuestion(room);
+  }
   deck.prevCat = q.ci;
-  deck.recent.push(q.text);
-  deck.recentSet.add(q.text);
-  if (deck.recent.length > RECENT_MAX) deck.recentSet.delete(deck.recent.shift());
+  deck.seen.add(q.key);
   deck.answers = [...last, q.answer];
-  return { text: q.text, answer: q.answer, category: q.category };
+  return { text: q.text, answer: q.answer, category: q.category, key: q.key };
 }
 // === QUESTION-BANK-END ===
 
@@ -1943,7 +1983,7 @@ function hostView(room) {
   return {
     code: room.code,
     phase: room.phase,
-    round: q && inGame ? { id: room.game + '-' + room.qIndex, index: room.qIndex, total: totalLabel(), text: q.text, category: q.category } : null,
+    round: q && inGame ? { id: room.game + '-' + room.qIndex, index: room.qIndex, total: totalLabel(), text: q.text, category: q.category, key: q.key } : null,
     remainingMs: room.phase === 'question' ? Math.max(0, room.deadline - Date.now()) : 0,
     questionMs: CONFIG.QUESTION_MS,
     allAnswered: room.allAnswered,
@@ -2159,6 +2199,7 @@ io.on('connection', (socket) => {
     let room = rooms.get(String(msg.code || ''));
     if (room && room.key !== msg.key) room = null;
     if (!room) room = createRoom();
+    rememberSeen(room, msg.seen); // الأسئلة اللي انسألت قبل على هالشاشة
 
     const oldHostId = room.hostId;
     room.hostId = socket.id;
