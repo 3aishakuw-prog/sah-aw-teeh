@@ -1874,15 +1874,39 @@ const app = express();
 app.disable('x-powered-by');
 // الملفات إما داخل مجلد public (نسخة الكمبيوتر) أو جنب server.js مباشرة (نسخة الموقع)
 const PUBLIC_DIR = path.join(__dirname, 'public');
-if (fs.existsSync(PUBLIC_DIR)) {
+const HAS_PUBLIC = fs.existsSync(PUBLIC_DIR);
+
+// ربط التطبيق بالموقع (Google Play): Android يتأكد من هالملف إن التطبيق والموقع لنفس الشخص.
+// المحتوى من متغير ASSETLINKS_JSON في Render أو من ملف assetlinks.json جنب server.js
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  res.type('application/json').set('Cache-Control', 'no-cache');
+  if (process.env.ASSETLINKS_JSON) return res.send(process.env.ASSETLINKS_JSON);
+  const file = [path.join(__dirname, 'assetlinks.json'), path.join(PUBLIC_DIR, 'assetlinks.json')].find((f) => fs.existsSync(f));
+  if (!file) return res.send('[]');
+  res.sendFile(file);
+});
+
+if (HAS_PUBLIC) {
   app.use(express.static(PUBLIC_DIR));
 } else {
   const PAGES = {
     '/': 'index.html', '/index.html': 'index.html', '/mobile.html': 'mobile.html',
     '/host.js': 'host.js', '/client.js': 'client.js', '/style.css': 'style.css',
+    // ملفات التطبيق (Google Play / الشاشة الرئيسية للجوال)
+    '/start.html': 'start.html', '/privacy.html': 'privacy.html', '/offline.html': 'offline.html',
+    '/manifest.webmanifest': 'manifest.webmanifest', '/sw.js': 'sw.js',
+    '/icon-192.png': 'icon-192.png', '/icon-512.png': 'icon-512.png', '/icon-maskable.png': 'icon-maskable.png',
+    '/apple-touch-icon.png': 'apple-touch-icon.png', '/favicon.ico': 'icon-192.png',
   };
+  const TYPES = { '.webmanifest': 'application/manifest+json', '.png': 'image/png' };
   for (const [route, file] of Object.entries(PAGES)) {
-    app.get(route, (req, res) => res.sendFile(path.join(__dirname, file)));
+    app.get(route, (req, res) => {
+      const full = path.join(__dirname, file);
+      if (!fs.existsSync(full)) return res.status(404).end();
+      const type = TYPES[path.extname(file)];
+      if (type) res.type(type);
+      res.sendFile(full);
+    });
   }
 }
 
